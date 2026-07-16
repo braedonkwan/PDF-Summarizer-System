@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pdf-summarizer"
+version = "0.1.0"
+description = "Local Ollama PDF summarizer with token-based recursive compression."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27.0",
+    "pypdf>=4.0.0",
+    "tiktoken>=0.7.0",
+]
+
+[project.scripts]
+pdf-summarizer = "pdf_summarizer.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
