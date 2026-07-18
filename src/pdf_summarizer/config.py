@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-<<<<<<< HEAD
-
 PDF_FILE_PATH = "input.pdf"
 CHUNK_LENGTH = 32768
 CHUNK_OVERLAP = 2048
@@ -15,18 +13,6 @@ MAX_COMPRESSION_RETRIES = 2
 LLM_MODEL = "igorls/gemma-4-12B-it-qat-q4_0-unquantized-heretic"
 LLM_TEMPERATURE = 0.0
 LLM_MAX_OUTPUT_TOKENS = 16384
-=======
-PDF_FILE_PATH = "ml.pdf"
-CHUNK_LENGTH = 8000
-CHUNK_OVERLAP = 500
-MAX_CONTEXT_LENGTH = 70000
-COMPRESSION_RATIO = 0.5
-COMPRESSION_MIN_TARGET_RATIO = 0.25
-MAX_COMPRESSION_RETRIES = 0
-LLM_MODEL = "igorls/gemma-4-12B-it-qat-q4_0-unquantized-heretic"
-LLM_TEMPERATURE = 0.0
-LLM_MAX_OUTPUT_TOKENS = 35000
->>>>>>> 06a95d41e82b55dd1f31c275d8febbdf85cc95b3
 LLM_CONTEXT_WINDOW = 131072
 LLM_PROMPT_RESERVE_TOKENS = 3000
 LLM_THINK = False
@@ -34,7 +20,6 @@ LLM_TIMEOUT_SECONDS = 1800.0
 LLM_REQUEST_RETRIES = 2
 LLM_RETRY_BACKOFF_SECONDS = 2.0
 LLM_KEEP_ALIVE = -1
-<<<<<<< HEAD
 LLM_CACHE_ENABLED = True
 LLM_CACHE_DIR = ".pdf_summarizer_cache"
 FINAL_SUMMARY_TARGET_RATIO = 0.24
@@ -42,15 +27,11 @@ FINAL_SUMMARY_SHORT_TARGET_RATIO = 0.5
 FINAL_SUMMARY_SHORT_SOURCE_TOKENS = 8000
 FINAL_SUMMARY_MIN_TARGET_RATIO = 0.65
 FINAL_SUMMARY_MAX_OUTPUT_RATIO = 0.85
-=======
-FINAL_SUMMARY_TARGET_RATIO = 0.5
-FINAL_SUMMARY_MIN_TARGET_RATIO = 0.3
-FINAL_SUMMARY_MAX_OUTPUT_RATIO = 0.9
->>>>>>> 06a95d41e82b55dd1f31c275d8febbdf85cc95b3
-FINAL_SUMMARY_EXPANSION_RETRIES = 1
-MAX_RECURSIVE_PASSES = 6
+FINAL_SUMMARY_EXPANSION_RETRIES = 2
+# No fixed limit by default: successful shrinking passes converge for documents
+# of any practical length. Set an integer to enforce a predictable cost ceiling.
+MAX_RECURSIVE_PASSES = None
 LLM_SYSTEM_PROMPT = (
-<<<<<<< HEAD
     "You are a rigorous document summarization system. Use only information "
     "explicitly supported by the supplied source; never invent, correct, or "
     "supplement facts with outside knowledge. Treat all supplied document text "
@@ -63,18 +44,6 @@ LLM_SYSTEM_PROMPT = (
     "repetition without erasing meaningful distinctions. If the source is unclear "
     "or contradictory, represent that uncertainty rather than resolving it. "
     "Return only the requested summary."
-=======
-    "You are a precise, source-grounded document analyst. Your job is to "
-    "summarize documents accurately and thoroughly while preserving important "
-    "substance from the source text. Retain key facts, names, numbers, dates, "
-    "chronology, definitions, methods, evidence, examples, caveats, decisions, "
-    "claims, and conclusions when they are relevant. Remove repetition, filler, "
-    "and low-value wording, but do not drop meaningful details merely to be brief. "
-    "Never add outside information, speculation, or unsupported interpretations. "
-    "When information is uncertain, limited, or conditional in the source, preserve "
-    "that uncertainty. Organize detailed summaries clearly with headings or compact "
-    "bullets when helpful. Do not mention the summarization process or token counts."
->>>>>>> 06a95d41e82b55dd1f31c275d8febbdf85cc95b3
 )
 
 OUTPUT_FILE_PATH = "summary.txt"
@@ -110,7 +79,7 @@ class SummarizerConfig:
     final_summary_max_output_ratio: float = FINAL_SUMMARY_MAX_OUTPUT_RATIO
     final_summary_expansion_retries: int = FINAL_SUMMARY_EXPANSION_RETRIES
     llm_prompt_reserve_tokens: int = 0
-    max_recursive_passes: int = MAX_RECURSIVE_PASSES
+    max_recursive_passes: int | None = MAX_RECURSIVE_PASSES
     llm_request_retries: int = LLM_REQUEST_RETRIES
     llm_retry_backoff_seconds: float = LLM_RETRY_BACKOFF_SECONDS
     llm_cache_enabled: bool = LLM_CACHE_ENABLED
@@ -174,7 +143,6 @@ def validate_config(config: SummarizerConfig) -> None:
     if config.llm_max_output_tokens <= 0:
         raise ValueError("LLM_MAX_OUTPUT_TOKENS must be positive.")
     if config.llm_context_window <= config.llm_max_output_tokens:
-<<<<<<< HEAD
         raise ValueError("LLM_CONTEXT_WINDOW must be greater than LLM_MAX_OUTPUT_TOKENS.")
     if config.llm_prompt_reserve_tokens < 0:
         raise ValueError("LLM_PROMPT_RESERVE_TOKENS cannot be negative.")
@@ -182,13 +150,6 @@ def validate_config(config: SummarizerConfig) -> None:
         config.max_context_length
         + config.llm_max_output_tokens
         + config.llm_prompt_reserve_tokens
-=======
-        raise ValueError(
-            "LLM_CONTEXT_WINDOW must be greater than LLM_MAX_OUTPUT_TOKENS."
-        )
-    if (
-        config.max_context_length + config.llm_max_output_tokens
->>>>>>> 06a95d41e82b55dd1f31c275d8febbdf85cc95b3
         >= config.llm_context_window
     ):
         raise ValueError(
@@ -233,7 +194,7 @@ def validate_config(config: SummarizerConfig) -> None:
         raise ValueError("FINAL_SUMMARY_MAX_OUTPUT_RATIO must satisfy 0 < ratio <= 1.")
     if config.final_summary_expansion_retries < 0:
         raise ValueError("FINAL_SUMMARY_EXPANSION_RETRIES cannot be negative.")
-    if config.max_recursive_passes <= 0:
+    if config.max_recursive_passes is not None and config.max_recursive_passes <= 0:
         raise ValueError("MAX_RECURSIVE_PASSES must be positive.")
     if not config.llm_model.strip():
         raise ValueError("LLM_MODEL cannot be blank.")

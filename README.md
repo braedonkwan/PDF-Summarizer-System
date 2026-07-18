@@ -4,7 +4,9 @@ A local Ollama-powered PDF summarizer. It extracts text from a PDF, chunks the
 text by token count, compresses each chunk with an Ollama model, recursively
 compresses the result until it fits the configured context limit, then writes a
 final summary to disk. Extracted pages retain `[Page N]` markers so page identity
-and gaps caused by image-only pages survive later compression passes. Chunking
+and gaps caused by image-only pages survive later compression passes. Extraction
+uses pypdf's layout mode to better retain columns and table-like spacing, and the
+run reports the exact page ranges for which no text could be extracted. Chunking
 prefers nearby paragraph, line, and sentence boundaries while retaining a strict
 token limit for long unstructured passages.
 
@@ -13,8 +15,7 @@ token limit for long unstructured passages.
 - Python 3.10 or newer
 - Ollama installed and running
 - An Ollama model that can handle the configured context window
-- A text-based PDF. Scanned image-only PDFs need OCR before this tool can
-  extract useful text.
+- A PDF containing extractable text
 
 The default config is tuned for an RTX 6000 Ada 48 GB workstation card and uses:
 
@@ -33,7 +34,8 @@ The default config is tuned for an RTX 6000 Ada 48 GB workstation card and uses:
 - `LLM_KEEP_ALIVE = -1` so Ollama keeps the model loaded between requests
 - Two retries with exponential backoff for transient Ollama failures
 - Content-addressed response caching so interrupted runs reuse completed calls
-- At most `6` recursive compression passes
+- Recursive compression until the source fits, with non-shrinking-output
+  detection to prevent an infinite loop
 
 This profile favors a more detailed final summary by preserving more detail
 during compression, rejecting drastically undersized intermediate summaries,
@@ -145,16 +147,21 @@ command-line options without editing the profile.
 | `FINAL_SUMMARY_SHORT_SOURCE_TOKENS` | `8000` | Source size at which the short-document ratio finishes transitioning to the normal final ratio. |
 | `FINAL_SUMMARY_MIN_TARGET_RATIO` | `0.65` | Minimum useful fraction of the final summary target before the final pass asks for a denser version. |
 | `FINAL_SUMMARY_MAX_OUTPUT_RATIO` | `0.85` | Fraction of `LLM_MAX_OUTPUT_TOKENS` used as the final summary target cap, leaving generation headroom so the model can finish naturally. |
-| `FINAL_SUMMARY_EXPANSION_RETRIES` | `1` | Extra attempts when the final summary is much shorter or longer than its target range. |
-| `MAX_RECURSIVE_PASSES` | `6` | Safety limit on rechunking and recompression passes. |
+| `FINAL_SUMMARY_EXPANSION_RETRIES` | `2` | Extra attempts when the final summary is incomplete or falls outside its target range. Each retry uses a distinct prompt so response caching cannot replay the same failed candidate. |
+| `MAX_RECURSIVE_PASSES` | `None` | Optional safety/cost limit on rechunking and recompression passes. The default permits convergence for documents of any practical length. |
 | `TOKEN_ENCODING` | `cl100k_base` | Tokenizer encoding used for chunking and progress counts. |
 
 Validation runs before summarization. The tool fails fast if the PDF is missing,
 if chunk settings are invalid, or if the configured prompt/output sizes cannot
 fit in the Ollama context window. Blank or malformed Ollama responses are rejected.
-If Ollama reports that a generation exhausted its output-token limit, the partial
-text is never accepted as a finished summary; the summarizer retries with a more
-concise instruction when retries remain.
+Unreadable or password-protected PDFs produce actionable errors. Pages lacking
+extractable text are reported as compact ranges (for example, `2-4, 9`) so a
+partial summary is never mistaken for complete coverage.
+Every final-generation prompt requires an exact completion marker, which is
+removed before the summary is returned or written. A response is considered
+complete only when that marker is present at the end. Missing markers, unfinished
+API responses, and output-limit stops trigger a more concise regeneration; an
+incomplete candidate is never written as the final summary.
 
 ## Use
 
@@ -209,25 +216,31 @@ from silently pushing the combined target above the desired context size. Each
 pass reports its chosen ratio, chunk ceiling, and overlap. If the result remains
 too large, it rechunks and recompresses it (without
 source-chunk overlap on later passes) until it fits or reaches the configured
-recursive-pass safety limit.
+recursive-pass safety limit, when one is configured. The default has no fixed
+pass ceiling; actual capacity remains bounded by available memory, disk, and
+model runtime.
 
 Final-summary length is also adaptive. Very short sources retain close to half
 their information, then the target ratio decreases smoothly toward `24%` as the
 source approaches 8,000 tokens. Larger sources use the normal ratio, while the
 `FINAL_SUMMARY_MAX_OUTPUT_RATIO` cap always leaves generation headroom so the
-model can finish rather than being cut off.
+model can finish rather than being cut off. Final synthesis also performs a
+coverage audit across the beginning, middle, and end of the source and explicitly
+protects unique facts, qualifications, and minority positions from being dropped
+merely because they appear only once.
 
 Successful Ollama responses are cached atomically. Cache keys include the model,
 system prompt, temperature, context size, thinking setting, full request prompt,
 and output budget. Consequently, changing the source, prompt, model, or relevant
 generation settings produces a new entry instead of reusing stale output. Empty,
-corrupt, truncated, and failed responses are not reused. Delete
+corrupt, truncated, failed, and completion-marker-missing final responses are not
+reused. Delete
 `.pdf_summarizer_cache` when you want to force a completely fresh run.
 
-When length retries produce several imperfect candidates, the summarizer keeps
+When retries produce several complete but imperfect candidates, the summarizer keeps
 the result closest to the requested token range. A slightly oversized but
 substantive result therefore wins over a drastically undersized result; equally
-distant candidates prefer the shorter version. Truncated generations remain
+distant candidates prefer the shorter version. Incomplete generations remain
 ineligible regardless of their apparent length.
 
 ## Development
@@ -245,8 +258,7 @@ require a running Ollama server.
 
 - `PDF file not found`: update `PDF_FILE_PATH` or run the command from the
   directory that contains the configured relative path.
-- `No extractable text found in PDF`: the PDF may be scanned or image-only. Run
-  OCR first and retry with the OCR output PDF.
+- `No extractable text found in PDF`: the PDF does not contain usable embedded text.
 - `Cannot reach Ollama`: the startup preflight runs after local configuration
   validation but before PDF extraction. Start `ollama serve` or correct
   `--ollama-url`.

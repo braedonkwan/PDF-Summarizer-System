@@ -6,6 +6,7 @@ from pdf_summarizer.llm import (
     CachedLLMClient,
     OllamaClient,
     OutputLimitReached,
+    SUMMARY_COMPLETION_MARKER,
     create_llm_client,
     preflight_ollama,
 )
@@ -78,6 +79,37 @@ def test_cached_client_reuses_completed_request(tmp_path) -> None:
 
     assert first == second == "cached summary"
     assert underlying.calls == 1
+
+
+def test_cached_client_does_not_store_summary_missing_required_marker(
+    tmp_path,
+) -> None:
+    completed = f"complete summary\n{SUMMARY_COMPLETION_MARKER}"
+    underlying = CountingClient(["incomplete summary", completed])
+    client = CachedLLMClient(underlying, tmp_path / "cache", "model-settings")
+    prompt = f"Finish with {SUMMARY_COMPLETION_MARKER}"
+
+    assert client.summarize(prompt, max_output_tokens=100) == "incomplete summary"
+    assert client.summarize(prompt, max_output_tokens=100) == completed
+    assert underlying.calls == 2
+
+
+def test_cached_client_ignores_cached_final_missing_required_marker(
+    tmp_path,
+) -> None:
+    first = f"first complete\n{SUMMARY_COMPLETION_MARKER}"
+    regenerated = f"regenerated complete\n{SUMMARY_COMPLETION_MARKER}"
+    underlying = CountingClient([first, regenerated])
+    cache_dir = tmp_path / "cache"
+    client = CachedLLMClient(underlying, cache_dir, "model-settings")
+    prompt = f"Finish with {SUMMARY_COMPLETION_MARKER}"
+
+    assert client.summarize(prompt, max_output_tokens=100) == first
+    cache_file = next(cache_dir.glob("*.txt"))
+    cache_file.write_text("cached but incomplete", encoding="utf-8")
+
+    assert client.summarize(prompt, max_output_tokens=100) == regenerated
+    assert underlying.calls == 2
 
 
 def test_cached_client_invalidates_on_prompt_output_or_namespace_change(tmp_path) -> None:
@@ -209,6 +241,24 @@ def test_ollama_client_reports_output_limit_with_partial_text(
         client.summarize("source")
 
     assert exc_info.value.partial_text == "unfinished summary"
+
+
+def test_ollama_client_treats_unfinished_response_as_output_limit(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fake_post(url, *, json, timeout):
+        return httpx.Response(
+            200,
+            json={"response": "unfinished summary", "done": False},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = OllamaClient.from_config(_make_config(tmp_path))
+
+    with pytest.raises(OutputLimitReached):
+        client.summarize("source")
 
 
 def test_ollama_client_retries_transient_transport_failure(

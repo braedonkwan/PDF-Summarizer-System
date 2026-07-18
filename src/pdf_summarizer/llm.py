@@ -12,6 +12,8 @@ import httpx
 
 from pdf_summarizer.config import SummarizerConfig
 
+SUMMARY_COMPLETION_MARKER = "<!-- PDF_SUMMARY_COMPLETE -->"
+
 
 class LLMClient(Protocol):
     def summarize(self, prompt: str, *, max_output_tokens: int | None = None) -> str:
@@ -35,6 +37,7 @@ class CachedLLMClient:
     namespace: str
 
     def summarize(self, prompt: str, *, max_output_tokens: int | None = None) -> str:
+        requires_completion_marker = SUMMARY_COMPLETION_MARKER in prompt
         identity = json.dumps(
             {
                 "namespace": self.namespace,
@@ -49,7 +52,8 @@ class CachedLLMClient:
 
         try:
             cached = cache_path.read_text(encoding="utf-8").strip()
-            if cached:
+            cached_is_complete = cached.endswith(SUMMARY_COMPLETION_MARKER)
+            if cached and (not requires_completion_marker or cached_is_complete):
                 return cached
         except (FileNotFoundError, OSError, UnicodeError):
             pass
@@ -58,7 +62,11 @@ class CachedLLMClient:
             prompt,
             max_output_tokens=max_output_tokens,
         )
-        self._store(cache_path, summary)
+        has_completion_marker = summary.rstrip().endswith(
+            SUMMARY_COMPLETION_MARKER
+        )
+        if not requires_completion_marker or has_completion_marker:
+            self._store(cache_path, summary)
         return summary
 
     def _store(self, cache_path: Path, summary: str) -> None:
@@ -156,7 +164,7 @@ class OllamaClient:
         summary = summary.strip()
         if not summary:
             raise RuntimeError("Ollama returned an empty text response.")
-        if data.get("done_reason") == "length":
+        if data.get("done_reason") == "length" or data.get("done") is False:
             raise OutputLimitReached(summary)
         return summary
 
